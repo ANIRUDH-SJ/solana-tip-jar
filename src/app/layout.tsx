@@ -2,14 +2,16 @@
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
-// MODIFIED IMPORT PATH:
-import WalletContextProvider from './components/WalletContextProvider'; // Assuming components folder is directly under app
+import WalletContextProvider from './components/WalletContextProvider';
 
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Solana Tip Jar',
-  description: 'Tip content creators with SOL!',
+  title: 'Solana Tip Jar - Tip Creators with SOL!', // More descriptive
+  description: 'The easiest way to send and receive SOL tips. One-click tipping for content creators on Twitter/X, Twitch, and more!',
+  icons: {
+    icon: '/favicon.ico', // Path relative to the public folder
+  }
 };
 
 export default function RootLayout({
@@ -19,7 +21,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={inter.className}>
+      <body className={`${inter.className} bg-gray-900`}> {/* Ensure bg-gray-900 is on body or html for full coverage */}
         <WalletContextProvider>
           {children}
         </WalletContextProvider>
