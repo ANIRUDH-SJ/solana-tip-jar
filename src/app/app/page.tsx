@@ -5,7 +5,6 @@ import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { SystemProgram, Transaction, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { useState, useCallback, ChangeEvent, useEffect } from 'react';
-import Link from 'next/link';
 import Leaderboard from '../components/Leaderboard'; // Ensure this path is correct
 
 interface Tip {
@@ -52,8 +51,7 @@ export default function HomePage() {
     // This effect is for user's own recent tips. Leaderboard has its own useEffect.
   }, []);
 
-
-  const commonTipLogic = async (
+  const commonTipLogic = useCallback(async (
     toAddress: string,
     tipAmountSOL: string,
     creatorDisplayName: string
@@ -121,13 +119,12 @@ export default function HomePage() {
       // This is a more robust way to trigger updates across components than relying on txSignature change.
       window.dispatchEvent(new StorageEvent('storage', { key: 'solanaTipJarGlobalLeaderboard' }));
 
-
       return true;
 
-    } catch (err: any) {
+    } catch (err: unknown) { // Changed 'any' to 'unknown'
       console.error("Transaction error:", err);
       let message = "Transaction failed.";
-      if (err.message) {
+      if (err instanceof Error) { // Type check for Error
         if (err.message.includes("Invalid public key input")) {
           message = "Invalid recipient Solana address.";
         } else if (err.message.toLowerCase().includes("user rejected the request")) {
@@ -141,7 +138,7 @@ export default function HomePage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [connected, publicKey, connection, sendTransaction, setError, setSuccessMessage, setTxSignature, setLoading, setRecentTips]);
 
   const handleDirectTip = useCallback(async () => {
     if (!recipient || !amount) {
@@ -154,7 +151,7 @@ export default function HomePage() {
       setRecipient("");
       setAmount("");
     }
-  }, [publicKey, connection, sendTransaction, recipient, amount, connected, commonTipLogic]);
+  }, [commonTipLogic, recipient, amount]);
 
   const generateLink = () => {
     setError("");
@@ -167,7 +164,7 @@ export default function HomePage() {
     }
     try {
       new PublicKey(linkRecipientAddress);
-    } catch (e) {
+    } catch { // Removed unused 'e' variable
       setError("Invalid Creator's SOL Address for the link. Please enter a valid Solana public key.");
       return;
     }
@@ -193,7 +190,7 @@ export default function HomePage() {
           setSuccessMessage("Link copied to clipboard!");
           setError("");
         })
-        .catch(err => {
+        .catch(err => { // Removed unused 'e' variable, err is conventional
           console.error('Failed to copy: ', err);
           setError("Failed to copy link.");
           setSuccessMessage("");
@@ -247,7 +244,7 @@ export default function HomePage() {
             <div className="space-y-4">
               <div>
                 <label htmlFor="recipient" className="block text-sm font-medium text-gray-300">
-                  Recipient's SOL Address
+                  Recipient&apos;s SOL Address
                 </label>
                 <input
                   type="text"
@@ -289,7 +286,7 @@ export default function HomePage() {
             <div className="space-y-4">
               <div>
                 <label htmlFor="creatorHandle" className="block text-sm font-medium text-gray-300">
-                  Creator's Handle/Name (e.g., @username)
+                  Creator&apos;s Handle/Name (e.g., @username)
                 </label>
                 <input
                   type="text"
@@ -302,7 +299,7 @@ export default function HomePage() {
               </div>
               <div>
                 <label htmlFor="linkRecipientAddress" className="block text-sm font-medium text-gray-300">
-                  Creator's SOL Address
+                  Creator&apos;s SOL Address
                 </label>
                 <input
                   type="text"

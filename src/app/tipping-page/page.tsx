@@ -110,12 +110,12 @@ function TippingPageContent() {
       const globalTips: Tip[] = JSON.parse(localStorage.getItem('solanaTipJarGlobalLeaderboard') || '[]');
       globalTips.unshift(newTip);
       const updatedGlobalTips = globalTips.slice(0, 50);
-        localStorage.setItem('solanaTipJarGlobalLeaderboard', JSON.stringify(updatedGlobalTips));
+      localStorage.setItem('solanaTipJarGlobalLeaderboard', JSON.stringify(updatedGlobalTips));
 
-    } catch (err: any) {
+    } catch (err: unknown) { // Changed 'any' to 'unknown'
       console.error("Transaction error:", err);
       let message = "Transaction failed.";
-      if (err.message) {
+      if (err instanceof Error) { // Type check for Error
         if (err.message.includes("Invalid public key input")) {
           message = "The creator's SOL address in the link is invalid.";
         } else if (err.message.toLowerCase().includes("user rejected the request")) {
