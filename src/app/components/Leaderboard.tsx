@@ -1,134 +1,113 @@
 // src/app/components/Leaderboard.tsx
 "use client";
 
-import React, { useEffect, useState } from 'react';
-
-// Re-define Tip interface here or import if you move it to a shared types file
-interface Tip {
-  handle: string;
-  address: string;
-  amount: string;
-  sig: string;
-  date: string;
-}
-
-interface AggregatedTip {
-  address: string; // Unique key: recipient's SOL address
-  handle: string;  // Display name (e.g., Twitter handle, or first handle encountered)
-  totalAmount: number; // Sum of SOL tipped
-  tipCount: number;    // Number of tips received
-}
+import React, { useEffect, useState, useCallback } from 'react';
+import Image from 'next/image';
+import type { Tip, CreatorProfile, AggregatedTipData } from '../types'; // Adjust path
 
 const Leaderboard: React.FC = () => {
-  const [leaderboardData, setLeaderboardData] = useState<AggregatedTip[]>([]);
+  const [leaderboardData, setLeaderboardData] = useState<AggregatedTipData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  const loadAndProcessLeaderboard = () => {
+  const loadAndProcessLeaderboard = useCallback(() => {
     setIsLoading(true);
     const globalTipsRaw = localStorage.getItem('solanaTipJarGlobalLeaderboard');
-    const globalTips: Tip[] = globalTipsRaw ? JSON.parse(globalTipsRaw) : [];
+    const allTips: Tip[] = globalTipsRaw ? JSON.parse(globalTipsRaw) : [];
 
-    if (globalTips.length === 0) {
-      setLeaderboardData([]);
-      setIsLoading(false);
-      return;
+    if (allTips.length === 0) {
+      setLeaderboardData([]); setIsLoading(false); return;
     }
 
-    const aggregatedData: Record<string, AggregatedTip> = {};
+    const aggregatedData: Record<string, AggregatedTipData> = {};
 
-    globalTips.forEach(tip => {
+    allTips.forEach(tip => {
       const amountNum = parseFloat(tip.amount);
-      if (isNaN(amountNum) || !tip.address) return; // Skip invalid entries
+      if (isNaN(amountNum) || !tip.address) return;
+
+      let pfpUrl: string | undefined;
+      let currentDisplayHandle = tip.handle;
+      const profileKey = `creatorProfile_${tip.address}`;
+      const profileJson = localStorage.getItem(profileKey);
+      if (profileJson) {
+        try {
+          const profile: CreatorProfile = JSON.parse(profileJson);
+          currentDisplayHandle = profile.displayName || profile.username || tip.handle;
+          pfpUrl = profile.profilePictureUrl;
+        } catch (e) { console.error("Error parsing profile for leaderboard entry:", tip.address, e); }
+      }
+      if (currentDisplayHandle === "Direct Tip" || currentDisplayHandle === tip.address || !currentDisplayHandle?.trim()) {
+        currentDisplayHandle = `Creator (${tip.address.substring(0,4)}...)`;
+      }
 
       if (aggregatedData[tip.address]) {
         aggregatedData[tip.address].totalAmount += amountNum;
         aggregatedData[tip.address].tipCount += 1;
-        // Logic for choosing best handle: if current tip's handle is not "Direct Tip"
-        // and the stored one is, update it. Or prefer shorter/longer, etc.
-        // For simplicity, we can take the handle from the most recent tip to this address
-        // or the first non-"Direct Tip" handle.
-        if (tip.handle && tip.handle !== "Direct Tip") {
-             aggregatedData[tip.address].handle = tip.handle;
-        } else if (!aggregatedData[tip.address].handle || aggregatedData[tip.address].handle === "Direct Tip") {
-            // If existing handle is "Direct Tip" or null, and new one is also "Direct Tip", keep existing or update.
-            // This logic can be refined. For now, a new "Direct Tip" doesn't overwrite a specific handle.
-            if (!aggregatedData[tip.address].handle) { // If no handle yet
-                 aggregatedData[tip.address].handle = "Creator"; // Default if only direct tips
-            }
-        }
-
+        aggregatedData[tip.address].handle = currentDisplayHandle;
+        if (pfpUrl !== undefined) aggregatedData[tip.address].profilePictureUrl = pfpUrl;
       } else {
         aggregatedData[tip.address] = {
-          address: tip.address,
-          handle: (tip.handle && tip.handle !== "Direct Tip") ? tip.handle : `Creator (${tip.address.substring(0,4)}...)`, // Initial handle
-          totalAmount: amountNum,
-          tipCount: 1,
+          address: tip.address, handle: currentDisplayHandle, totalAmount: amountNum, tipCount: 1, profilePictureUrl: pfpUrl,
         };
       }
     });
 
     const sortedLeaderboard = Object.values(aggregatedData)
-      .sort((a, b) => b.totalAmount - a.totalAmount) // Sort by total SOL received
-      .slice(0, 10); // Display top 10 creators
-
+      .sort((a, b) => b.totalAmount - a.totalAmount)
+      .slice(0, 10);
     setLeaderboardData(sortedLeaderboard);
     setIsLoading(false);
-  };
+  }, []);
 
   useEffect(() => {
     loadAndProcessLeaderboard();
-
-    // Listen for storage events to update the leaderboard if data changes in another tab/window
-    // This provides a more "live" feel for the demo.
     const handleStorageChange = (event: StorageEvent) => {
-      if (event.key === 'solanaTipJarGlobalLeaderboard' || event.key === 'solanaTipJarRecentTips') {
-        // We can reload if either changes, as global tips are a superset
+      if (event.key === 'solanaTipJarGlobalLeaderboard' || event.key?.startsWith('creatorProfile_')) {
         loadAndProcessLeaderboard();
       }
     };
-
     window.addEventListener('storage', handleStorageChange);
-
-    // Cleanup listener on component unmount
-    return () => {
-      window.removeEventListener('storage', handleStorageChange);
-    };
-  }, []); // Empty dependency array means this effect runs once on mount and cleans up on unmount
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, [loadAndProcessLeaderboard]);
 
   if (isLoading) {
-    return <div className="text-center text-gray-400 py-4">Loading leaderboard...</div>;
+    return (
+      <div className="space-y-3 max-h-96 overflow-y-auto pr-1 custom-scrollbar">
+        <p className="text-gray-400 italic text-center py-4">Loading leaderboard...</p>
+      </div>
+    );
   }
-
   if (leaderboardData.length === 0) {
-    return <p className="text-gray-400 text-center py-4">No creators have been tipped yet. Be the first to support someone!</p>;
+    return <p className="text-gray-400 text-center py-6 italic bg-gray-700/40 rounded-md">The leaderboard is currently empty. Be the first to tip a creator!</p>;
   }
 
   return (
-    <div className="space-y-4">
-      {leaderboardData.map((creator, index) => (
+    <div className="space-y-3 max-h-[calc(100vh-350px)] min-h-[200px] overflow-y-auto pr-2 custom-scrollbar">
+      {leaderboardData.map((entry, index) => (
         <div
-          key={creator.address}
-          className="p-4 bg-gray-700 rounded-lg shadow-md flex items-center justify-between space-x-3 hover:bg-gray-600/50 transition-colors"
+          key={entry.address}
+          className="p-3.5 bg-gray-700/80 rounded-lg shadow-md flex items-center space-x-4 hover:bg-gray-600/70 transition-all duration-150 transform hover:scale-[1.01]"
         >
-          <div className="flex items-center space-x-3">
-            <span className="text-xl font-bold text-indigo-300 w-8 text-center">{index + 1}.</span>
-            <div className="flex-1 min-w-0"> {/* min-w-0 for truncation */}
-              <p className="font-semibold text-white truncate" title={creator.handle}>
-                {creator.handle}
-              </p>
-              <p className="text-xs text-gray-400 break-all" title={creator.address}>{creator.address}</p>
+          <span className="text-lg font-bold text-indigo-300 w-8 text-center flex-shrink-0">{index + 1}.</span>
+          {entry.profilePictureUrl ? (
+            <Image src={entry.profilePictureUrl} alt={entry.handle} width={44} height={44} className="rounded-full object-cover flex-shrink-0 shadow-sm border border-gray-600" onError={(e)=>(e.currentTarget.style.display = 'none')} />
+          ) : (
+            <div className="w-11 h-11 bg-gray-600 rounded-full flex items-center justify-center text-xl text-gray-300 flex-shrink-0 shadow-sm border border-gray-600">
+              {(entry.handle.charAt(0) || "?").toUpperCase()}
             </div>
-          </div>
-          <div className="text-right flex-shrink-0">
-            <p className="text-lg font-bold text-green-400">
-              {creator.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 9 })} SOL
+          )}
+          <div className="flex-1 min-w-0">
+            <p className="font-semibold text-gray-50 truncate" title={entry.handle}>
+              {entry.handle}
             </p>
-            <p className="text-xs text-gray-500">{creator.tipCount} tip{creator.tipCount !== 1 ? 's' : ''}</p>
+            <p className="text-xs text-gray-400 break-all" title={entry.address}>{entry.address.substring(0,10)}...{entry.address.substring(entry.address.length - 4)}</p>
+          </div>
+          <div className="text-right flex-shrink-0 pl-2">
+            <p className="text-md font-bold text-green-400">{entry.totalAmount.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:4})} SOL</p>
+            <p className="text-xs text-gray-500">{entry.tipCount} tip{entry.tipCount !== 1 ? 's' : ''}</p>
           </div>
         </div>
       ))}
     </div>
   );
 };
-
 export default Leaderboard;

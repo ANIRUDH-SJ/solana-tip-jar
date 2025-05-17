@@ -1,410 +1,291 @@
-// src/app/page.tsx
+// src/app/app/page.tsx
 "use client";
 
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
-import { SystemProgram, Transaction, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
-import { useState, useCallback, ChangeEvent, useEffect } from 'react';
-import Leaderboard from '../components/Leaderboard'; // Ensure this path is correct
+// SystemProgram, Transaction, PublicKey, LAMPORTS_PER_SOL, MemoProgram are not used here
+import { useState, useCallback, ChangeEvent, useEffect, useRef, useMemo } from 'react';
+import Link from 'next/link';
+import Image from 'next/image';
+import {
+  UserCircleIcon, Cog8ToothIcon, TableCellsIcon, ArrowLeftOnRectangleIcon,
+  Bars3Icon, XMarkIcon, CodeBracketIcon, InformationCircleIcon,
+  ChatBubbleLeftEllipsisIcon, ArrowUpRightIcon, CreditCardIcon, LinkIcon as LinkHeroIcon, PaperAirplaneIcon // Added PaperAirplaneIcon
+} from '@heroicons/react/24/outline';
+import { motion, AnimatePresence } from 'framer-motion';
+import type { CreatorProfile, Tip, TipperStats } from '../types';
 
-interface Tip {
-  handle: string;
-  address: string;
-  amount: string;
-  sig: string;
-  date: string;
-}
+import CreatorDashboard from '../components/CreatorDashboard';
+import EmbedCodeGenerator from '../components/EmbedCodeGenerator';
+import Leaderboard from '../components/Leaderboard';
 
-export default function HomePage() {
-  const { connection } = useConnection();
-  const { publicKey, sendTransaction, connected } = useWallet();
+export default function AppHomePage() {
+  // const { connection } = useConnection(); // Not directly used in this component's tipping logic anymore
+  const { publicKey, connected, disconnect } = useWallet();
 
-  const [recipient, setRecipient] = useState<string>("");
-  const [amount, setAmount] = useState<string>("");
-  const [creatorHandle, setCreatorHandle] = useState<string>("");
-  const [linkRecipientAddress, setLinkRecipientAddress] = useState<string>("");
-  const [defaultTipAmount, setDefaultTipAmount] = useState<string>("0.05");
-  const [generatedLink, setGeneratedLink] = useState<string>("");
-
-  const [txSignature, setTxSignature] = useState<string>("");
-  const [loading, setLoading] = useState<boolean>(false);
+  const [hasMounted, setHasMounted] = useState(false);
+  // REMOVED: States for Direct Tipping (recipient, amount, directTipMessage)
+  // REMOVED: txSignature, loading (related to direct tipping on this page)
   const [error, setError] = useState<string>("");
   const [successMessage, setSuccessMessage] = useState<string>("");
-  const [recentTips, setRecentTips] = useState<Tip[]>([]);
+  const [recentTipsSent, setRecentTipsSent] = useState<Tip[]>([]); // Still used for Tipper Dashboard
+  const [currentProfile, setCurrentProfile] = useState<CreatorProfile | null>(null);
+  const [profileDisplayName, setProfileDisplayName] = useState<string>("");
+  const [profileUsername, setProfileUsername] = useState<string>("");
+  const [isUserDropdownOpen, setIsUserDropdownOpen] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [activeSection, setActiveSection] = useState<'main_tools' | 'creator_dashboard' | 'tipper_dashboard' | 'edit_profile' | 'embed_widget'>('main_tools');
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const mobileMenuRef = useRef<HTMLDivElement>(null);
 
-  const handleRecipientChange = (e: ChangeEvent<HTMLInputElement>) => setRecipient(e.target.value);
-  const handleAmountChange = (e: ChangeEvent<HTMLInputElement>) => setAmount(e.target.value);
-  const handleCreatorHandleChange = (e: ChangeEvent<HTMLInputElement>) => setCreatorHandle(e.target.value);
-  const handleLinkRecipientAddressChange = (e: ChangeEvent<HTMLInputElement>) => setLinkRecipientAddress(e.target.value);
-  const handleDefaultTipAmountChange = (e: ChangeEvent<HTMLInputElement>) => setDefaultTipAmount(e.target.value);
+  const handleProfileDisplayNameChange = (e: ChangeEvent<HTMLInputElement>) => setProfileDisplayName(e.target.value);
+  const handleProfileUsernameChange = (e: ChangeEvent<HTMLInputElement>) => setProfileUsername(e.target.value);
 
-  useEffect(() => {
+  useEffect(() => { setHasMounted(true); }, []);
+  useEffect(() => { /* ... Click outside handler ... */ }, []);
+  useEffect(() => { /* ... Load data on mount/connect (same profile loading logic) ... */
+    if (!hasMounted) return;
     const storedUserTips = localStorage.getItem('solanaTipJarRecentTips');
-    if (storedUserTips) {
-      try {
-        setRecentTips(JSON.parse(storedUserTips));
-      } catch (e) {
-        console.error("Failed to parse user recent tips from localStorage", e);
-        localStorage.removeItem('solanaTipJarRecentTips');
-      }
-    }
-    // This effect is for user's own recent tips. Leaderboard has its own useEffect.
-  }, []);
+    if (storedUserTips) { try { setRecentTipsSent(JSON.parse(storedUserTips)); } catch (e) { console.error(e); } }
 
-  const commonTipLogic = useCallback(async (
-    toAddress: string,
-    tipAmountSOL: string,
-    creatorDisplayName: string
-  ) => {
-    if (!connected || !publicKey) {
-      setError("Please connect your wallet.");
-      setSuccessMessage("");
-      return false;
-    }
+    if (connected && publicKey) {
+      const profileKey = `creatorProfile_${publicKey.toBase58()}`;
+      const existingProfileJson = localStorage.getItem(profileKey);
+      if (existingProfileJson) {
+        try {
+          const profile: CreatorProfile = JSON.parse(existingProfileJson);
+          setCurrentProfile(profile); setProfileDisplayName(profile.displayName);
+          setProfileUsername(profile.username || '');
+          if (activeSection === 'main_tools') setActiveSection('creator_dashboard');
+        } catch (e) { localStorage.removeItem(profileKey); if(activeSection === 'main_tools') setActiveSection('edit_profile'); }
+      } else {
+        setProfileDisplayName(""); setProfileUsername("");
+        if (activeSection === 'main_tools') setActiveSection('edit_profile');
+      }
+    } else { /* ... reset states on disconnect ... */ }
+  }, [connected, publicKey, hasMounted, activeSection]);
+
+  const handleSaveCreatorProfile = () => {
+    if (!connected || !publicKey) { setError("Connect wallet."); return; }
+    const displayNameToSave = profileDisplayName.trim();
+    if (!displayNameToSave) { setError("Display Name is required."); return; }
+    const profile: CreatorProfile = {
+      solAddress: publicKey.toBase58(),
+      displayName: displayNameToSave,
+      username: profileUsername.trim() || undefined,
+      profilePictureUrl: currentProfile?.profilePictureUrl,
+    };
+    localStorage.setItem(`creatorProfile_${publicKey.toBase58()}`, JSON.stringify(profile));
+    setCurrentProfile(profile);
+    setSuccessMessage("Profile saved!");
     setError("");
-    setSuccessMessage("");
-    setTxSignature("");
-    setLoading(true);
+    window.dispatchEvent(new StorageEvent('storage', { key: `creatorProfile_${publicKey.toBase58()}` }));
+    setActiveSection('creator_dashboard');
+    setIsUserDropdownOpen(false);
+    setIsMobileMenuOpen(false);
+  };
 
-    try {
-      const recipientPubKey = new PublicKey(toAddress);
-      const amountInLamports = parseFloat(tipAmountSOL) * LAMPORTS_PER_SOL;
-
-      if (isNaN(amountInLamports) || amountInLamports <= 0) {
-        setError("Invalid amount. Amount must be a number greater than 0.");
-        setLoading(false);
-        return false;
-      }
-
-      const transaction = new Transaction().add(
-        SystemProgram.transfer({
-          fromPubkey: publicKey,
-          toPubkey: recipientPubKey,
-          lamports: amountInLamports,
-        })
-      );
-
-      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
-      transaction.recentBlockhash = blockhash;
-      transaction.feePayer = publicKey;
-
-      const signature = await sendTransaction(transaction, connection);
-      await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'processed');
-
-      setTxSignature(signature);
-      setSuccessMessage(`Successfully tipped ${tipAmountSOL} SOL to ${creatorDisplayName || toAddress}!`);
-
-      const newTip: Tip = {
-        handle: creatorDisplayName,
-        address: toAddress,
-        amount: tipAmountSOL,
-        sig: signature,
-        date: new Date().toLocaleString(),
-      };
-
-      // 1. Update "Recent Tips Sent By You" (user-specific)
-      const currentUserRecentTips: Tip[] = JSON.parse(localStorage.getItem('solanaTipJarRecentTips') || '[]');
-      currentUserRecentTips.unshift(newTip);
-      const updatedUserTips = currentUserRecentTips.slice(0, 5);
-      localStorage.setItem('solanaTipJarRecentTips', JSON.stringify(updatedUserTips));
-      setRecentTips(updatedUserTips);
-
-      // 2. Update "Global Leaderboard" data
-      const globalTips: Tip[] = JSON.parse(localStorage.getItem('solanaTipJarGlobalLeaderboard') || '[]');
-      globalTips.unshift(newTip);
-      const updatedGlobalTips = globalTips.slice(0, 50);
-      localStorage.setItem('solanaTipJarGlobalLeaderboard', JSON.stringify(updatedGlobalTips));
-      
-      // Dispatch a storage event so Leaderboard component can update if it's listening
-      // This is a more robust way to trigger updates across components than relying on txSignature change.
-      window.dispatchEvent(new StorageEvent('storage', { key: 'solanaTipJarGlobalLeaderboard' }));
-
-      return true;
-
-    } catch (err: unknown) { // Changed 'any' to 'unknown'
-      console.error("Transaction error:", err);
-      let message = "Transaction failed.";
-      if (err instanceof Error) { // Type check for Error
-        if (err.message.includes("Invalid public key input")) {
-          message = "Invalid recipient Solana address.";
-        } else if (err.message.toLowerCase().includes("user rejected the request")) {
-          message = "Transaction rejected by user.";
-        } else {
-          message = err.message;
-        }
-      }
-      setError(message);
-      return false;
-    } finally {
-      setLoading(false);
-    }
-  }, [connected, publicKey, connection, sendTransaction, setError, setSuccessMessage, setTxSignature, setLoading, setRecentTips]);
-
-  const handleDirectTip = useCallback(async () => {
-    if (!recipient || !amount) {
-      setError("Please enter a recipient address and an amount for direct tip.");
-      setSuccessMessage("");
-      return;
-    }
-    const success = await commonTipLogic(recipient, amount, "Direct Tip");
-    if (success) {
-      setRecipient("");
-      setAmount("");
-    }
-  }, [commonTipLogic, recipient, amount]);
-
-  const generateLink = () => {
-    setError("");
-    setSuccessMessage("");
-    setGeneratedLink("");
-
-    if (!creatorHandle || !linkRecipientAddress || !defaultTipAmount) {
-      setError("Please fill in Creator's Handle/Name, their SOL Address, and Default Tip Amount for the link.");
-      return;
-    }
-    try {
-      new PublicKey(linkRecipientAddress);
-    } catch { // Removed unused 'e' variable
-      setError("Invalid Creator's SOL Address for the link. Please enter a valid Solana public key.");
-      return;
-    }
-    if (isNaN(parseFloat(defaultTipAmount)) || parseFloat(defaultTipAmount) <= 0) {
-      setError("Default tip amount must be a number greater than 0.");
-      return;
-    }
-
-    const params = new URLSearchParams({
-      creator: creatorHandle,
-      address: linkRecipientAddress,
-      amount: defaultTipAmount,
+  const tipperStats = useMemo<TipperStats>(() => {
+    if (!hasMounted || !connected || !publicKey) return { totalTipped: 0, tipCount: 0, uniqueCreatorsTipped: 0 };
+    let totalSOL = 0;
+    const uniqueAddresses = new Set<string>();
+    recentTipsSent.forEach(tip => {
+      totalSOL += parseFloat(tip.amount) || 0;
+      uniqueAddresses.add(tip.address);
     });
-    const link = `${window.location.origin}/tipping-page?${params.toString()}`;
-    setGeneratedLink(link);
-    setSuccessMessage("Tip link generated successfully!");
-  };
+    return {
+      totalTipped: totalSOL,
+      tipCount: recentTipsSent.length,
+      uniqueCreatorsTipped: uniqueAddresses.size
+    };
+  }, [recentTipsSent, connected, publicKey, hasMounted]);
 
-  const copyToClipboard = () => {
-    if (generatedLink) {
-      navigator.clipboard.writeText(generatedLink)
-        .then(() => {
-          setSuccessMessage("Link copied to clipboard!");
-          setError("");
-        })
-        .catch(err => { // Removed unused 'e' variable, err is conventional
-          console.error('Failed to copy: ', err);
-          setError("Failed to copy link.");
-          setSuccessMessage("");
-        });
+  const renderSectionContent = () => {
+    if (!hasMounted) { return <div className="text-center py-20 text-gray-400 animate-pulse">Initializing App...</div>; }
+    if (!connected || !publicKey) { 
+      return (
+        <div className="text-center py-20">
+          <h2 className="text-2xl font-bold mb-4 text-gray-300">Connect Your Wallet</h2>
+          <p className="text-gray-400 mb-8">Please connect your wallet to access the Tip Jar features.</p>
+          <WalletMultiButton />
+        </div>
+      ); 
     }
-  };
-
-  // --- START OF THE RETURN STATEMENT ---
-  return (
-    <main className="min-h-screen bg-gray-900 text-white flex flex-col items-center p-4 sm:p-8">
-      <div className="w-full max-w-2xl"> {/* Container for all content */}
-        
-        {/* Header Section */}
-        <div className="flex flex-col sm:flex-row justify-between items-center mb-8 gap-4">
-          <h1 className="text-4xl font-bold text-center sm:text-left bg-clip-text text-transparent bg-gradient-to-r from-purple-400 via-pink-500 to-red-500">
-            Solana Tip Jar
-          </h1>
-          <WalletMultiButton style={{ backgroundColor: '#6366f1', minWidth: '150px' }} />
-        </div>
-
-        {/* Connected Wallet Information */}
-        {connected && publicKey && (
-          <div className="mb-6 p-4 bg-gray-800 rounded-lg shadow-md">
-            <p className="text-sm text-gray-400">Your Wallet:</p>
-            <p className="text-lg break-all font-mono">{publicKey.toBase58()}</p>
-          </div>
-        )}
-
-        {/* Universal Messages: Error, Success, Transaction Signature */}
-        {error && <p className="my-4 p-3 bg-red-500/20 text-red-400 border border-red-500 rounded-md text-sm animate-fadeIn">{error}</p>}
-        {successMessage && <p className="my-4 p-3 bg-green-500/20 text-green-400 border border-green-500 rounded-md text-sm animate-fadeIn">{successMessage}</p>}
-        {txSignature && !error && (
-          <div className="my-4 p-3 bg-blue-500/20 text-blue-300 border border-blue-500 rounded-md text-sm animate-fadeIn">
-            <p>Transaction Confirmed! Signature:</p>
-            <a
-              href={`https://explorer.solana.com/tx/${txSignature}?cluster=devnet`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline break-all hover:text-blue-200"
-            >
-              {txSignature}
-            </a>
-          </div>
-        )}
-
-        {/* Forms Section: Direct Tip & Create Tip Link */}
-        <div className="grid md:grid-cols-2 gap-8 mb-8">
-          {/* Direct Tipping Form */}
-          <div className="bg-gray-800 p-6 rounded-lg shadow-xl">
-            <h2 className="text-2xl font-semibold mb-4">Send a Direct Tip</h2>
-            <div className="space-y-4">
-              <div>
-                <label htmlFor="recipient" className="block text-sm font-medium text-gray-300">
-                  Recipient&apos;s SOL Address
-                </label>
-                <input
-                  type="text"
-                  id="recipient"
-                  value={recipient}
-                  onChange={handleRecipientChange}
-                  placeholder="Enter recipient's Solana address"
-                  className="mt-1 block w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-white placeholder-gray-500"
-                />
+    switch (activeSection) {
+      case 'creator_dashboard': return <CreatorDashboard solAddress={publicKey.toBase58()} />;
+      case 'tipper_dashboard': return (
+        <div className="space-y-6 animate-fadeIn">
+          <div className="bg-gray-800 p-6 rounded-xl shadow-xl">
+            <h2 className="text-2xl font-bold mb-4 text-gray-100">Your Tipping Stats</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="bg-gray-700/50 p-4 rounded-lg">
+                <p className="text-sm text-gray-400">Total Tipped</p>
+                <p className="text-2xl font-bold text-indigo-400">{tipperStats.totalTipped.toFixed(2)} SOL</p>
               </div>
-              <div>
-                <label htmlFor="amount" className="block text-sm font-medium text-gray-300">
-                  Amount (SOL)
-                </label>
-                <input
-                  type="number"
-                  id="amount"
-                  value={amount}
-                  onChange={handleAmountChange}
-                  placeholder="0.1"
-                  step="0.000000001"
-                  min="0.000000001"
-                  className="mt-1 block w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-white placeholder-gray-500"
-                />
+              <div className="bg-gray-700/50 p-4 rounded-lg">
+                <p className="text-sm text-gray-400">Tips Sent</p>
+                <p className="text-2xl font-bold text-indigo-400">{tipperStats.tipCount}</p>
               </div>
-              <button
-                onClick={handleDirectTip}
-                disabled={!connected || loading || !recipient || !amount}
-                className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {loading ? 'Sending...' : 'Send Tip'}
-              </button>
+              <div className="bg-gray-700/50 p-4 rounded-lg">
+                <p className="text-sm text-gray-400">Creators Tipped</p>
+                <p className="text-2xl font-bold text-indigo-400">{tipperStats.uniqueCreatorsTipped}</p>
+              </div>
             </div>
           </div>
-
-          {/* Create Tip Link Form */}
-          <div className="bg-gray-800 p-6 rounded-lg shadow-xl">
-            <h2 className="text-2xl font-semibold mb-4">Create a Tip Link</h2>
-            <div className="space-y-4">
-              <div>
-                <label htmlFor="creatorHandle" className="block text-sm font-medium text-gray-300">
-                  Creator&apos;s Handle/Name (e.g., @username)
-                </label>
-                <input
-                  type="text"
-                  id="creatorHandle"
-                  value={creatorHandle}
-                  onChange={handleCreatorHandleChange}
-                  placeholder="@elonmusk or Elon Musk"
-                  className="mt-1 block w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-white placeholder-gray-500"
-                />
-              </div>
-              <div>
-                <label htmlFor="linkRecipientAddress" className="block text-sm font-medium text-gray-300">
-                  Creator&apos;s SOL Address
-                </label>
-                <input
-                  type="text"
-                  id="linkRecipientAddress"
-                  value={linkRecipientAddress}
-                  onChange={handleLinkRecipientAddressChange}
-                  placeholder="Creator's Solana wallet address"
-                  className="mt-1 block w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-white placeholder-gray-500"
-                />
-              </div>
-              <div>
-                <label htmlFor="defaultTipAmount" className="block text-sm font-medium text-gray-300">
-                  Default Tip Amount (SOL)
-                </label>
-                <input
-                  type="number"
-                  id="defaultTipAmount"
-                  value={defaultTipAmount}
-                  onChange={handleDefaultTipAmountChange}
-                  placeholder="0.05"
-                  step="0.000000001"
-                  min="0.000000001"
-                  className="mt-1 block w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-white placeholder-gray-500"
-                />
-              </div>
-              <button
-                onClick={generateLink}
-                disabled={loading || !linkRecipientAddress || !creatorHandle || !defaultTipAmount}
-                className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                Generate Tip Link
-              </button>
-              {generatedLink && (
-                <div className="mt-4 p-3 bg-gray-700 rounded-md">
-                  <p className="text-sm text-gray-300 mb-1">Your generated tip link:</p>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      readOnly
-                      value={generatedLink}
-                      className="flex-grow p-2 bg-gray-600 text-white rounded-md text-xs break-all"
-                      onClick={(e) => (e.target as HTMLInputElement).select()}
-                    />
-                    <button
-                      onClick={copyToClipboard}
-                      className="px-3 py-2 bg-blue-500 hover:bg-blue-600 text-white text-xs font-medium rounded-md transition-colors"
-                      title="Copy to Clipboard"
-                    >
-                      Copy
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div> {/* End of Forms Grid */}
-
-        {/* Leaderboard Section */}
-        <div className="bg-gray-800 p-6 rounded-lg shadow-xl mt-12">
-          <h2 className="text-3xl font-semibold mb-6 text-center">
-            <span role="img" aria-label="trophy" className="mr-2">🏆</span>
-            Top Tipped Creators
-            <span role="img" aria-label="trophy" className="ml-2">🏆</span>
-          </h2>
-          <Leaderboard /> {/* The Leaderboard component is rendered here */}
-        </div>
-
-        {/* Recent Tips Sent By You Section */}
-        <div className="bg-gray-800 p-6 rounded-lg shadow-xl mt-8 mb-8"> {/* Added mb-8 for spacing at bottom */}
-          <h2 className="text-2xl font-semibold mb-4">Recent Tips Sent By You</h2>
-          {recentTips.length > 0 ? (
-            <ul className="space-y-3">
-              {recentTips.map((tip, index) => (
-                <li key={tip.sig + index} className="p-3 bg-gray-700 rounded-md text-sm shadow">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="font-semibold">
-                        To: <span className="font-normal text-indigo-300">{tip.handle === 'Direct Tip' ? 'Direct Address' : tip.handle}</span>
-                      </p>
-                      {tip.handle !== 'Direct Tip' && <p className="text-xs text-gray-400">({tip.address})</p>}
+          <div className="bg-gray-800 p-6 rounded-xl shadow-xl">
+            <h2 className="text-2xl font-bold mb-4 text-gray-100">Recent Tips</h2>
+            {recentTipsSent.length === 0 ? (
+              <p className="text-gray-400 text-center py-4">No tips sent yet.</p>
+            ) : (
+              <div className="space-y-3">
+                {recentTipsSent.map((tip, index) => (
+                  <div key={index} className="bg-gray-700/50 p-4 rounded-lg">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <p className="font-medium text-gray-200">{tip.handle}</p>
+                        <p className="text-sm text-gray-400">{tip.date}</p>
+                      </div>
+                      <p className="text-lg font-bold text-indigo-400">{tip.amount} SOL</p>
                     </div>
-                    <p className="text-lg font-bold text-green-400">{tip.amount} SOL</p>
-                  </div>
-                  <p className="text-xs text-gray-500 mt-1">Date: {tip.date}</p>
-                  <p className="text-xs text-gray-500 mt-1 truncate">
-                    Signature: {' '}
-                    <a
-                      href={`https://explorer.solana.com/tx/${tip.sig}?cluster=devnet`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-blue-400 hover:text-blue-300 underline"
-                    >
+                    {tip.message && (
+                      <p className="mt-2 text-sm text-gray-300 italic">"{tip.message}"</p>
+                    )}
+                    <a href={`https://explorer.solana.com/tx/${tip.sig}?cluster=devnet`} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-400 hover:text-indigo-300 mt-2 inline-block">
                       View on Explorer
                     </a>
-                  </p>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-gray-400">No tips sent from this browser yet. Send one to see it here!</p>
-          )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
+      );
+      case 'edit_profile': return (
+        <div className="max-w-2xl mx-auto space-y-6 animate-fadeIn">
+          <div className="bg-gray-800 p-6 rounded-xl shadow-xl">
+            <h2 className="text-2xl font-bold mb-6 text-gray-100">Edit Your Profile</h2>
+            <div className="space-y-4">
+              <div>
+                <label htmlFor="displayName" className="app-label">Display Name</label>
+                <input
+                  type="text"
+                  id="displayName"
+                  value={profileDisplayName}
+                  onChange={handleProfileDisplayNameChange}
+                  placeholder="Enter your display name"
+                  className="mt-1 app-input"
+                />
+              </div>
+              <div>
+                <label htmlFor="username" className="app-label">Username (optional)</label>
+                <input
+                  type="text"
+                  id="username"
+                  value={profileUsername}
+                  onChange={handleProfileUsernameChange}
+                  placeholder="Enter a username"
+                  className="mt-1 app-input"
+                />
+              </div>
+              <button
+                onClick={handleSaveCreatorProfile}
+                className="w-full app-button-indigo !font-bold !py-3"
+              >
+                Save Profile
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+      case 'embed_widget': return <EmbedCodeGenerator creatorSolAddress={publicKey.toBase58()} creatorHandleForLink={profileUsername || profileDisplayName || publicKey.toBase58().substring(0,6)} profilePictureUrl={currentProfile?.profilePictureUrl} />;
+      case 'main_tools':
+      default: return (
+        <div className="space-y-10 animate-fadeIn">
+          {/* Main tools section - Now a welcome/overview and links */}
+          <section className="bg-gray-800 p-6 md:p-8 rounded-xl shadow-2xl ring-1 ring-gray-700/50 text-center">
+            <h2 className="text-3xl font-bold mb-4 text-gray-50 tracking-tight">Tip Jar Hub</h2>
+            <p className="text-gray-300 mb-8 max-w-xl mx-auto">
+              Welcome! From here you can send a direct tip to any Solana address, create a personalized tip link to share, or manage your creator profile and dashboards.
+            </p>
+            <div className="grid sm:grid-cols-2 gap-6 max-w-lg mx-auto">
+                {/* --- LINK TO SEND-TIP PAGE --- */}
+                <Link href="/send-tip" className="app-button-indigo !font-bold !py-3.5 w-full text-base">
+                    <PaperAirplaneIcon className="h-5 w-5 mr-2.5" /> Send a Direct Tip
+                </Link>
+                {/* --- END LINK --- */}
+                <Link href="/create-link" className="app-button-green !font-bold !py-3.5 w-full text-base">
+                    <LinkHeroIcon className="h-5 w-5 mr-2.5" /> Create Your Tip Link
+                </Link>
+            </div>
+          </section>
 
-      </div> {/* End of w-full max-w-2xl container */}
+          <section className="bg-gray-800 p-6 md:p-8 rounded-xl shadow-2xl ring-1 ring-gray-700/50">
+            <h2 className="text-2xl font-bold mb-6 text-center text-transparent bg-clip-text bg-gradient-to-r from-green-400 via-teal-400 to-sky-400 tracking-tight">🏆 Top Tipped Creators 🏆</h2>
+            <Leaderboard />
+          </section>
+        </div>
+      );
+    }
+  };
+
+  return (
+    <main className="min-h-screen bg-gray-900 text-gray-100 flex flex-col items-center p-4 sm:p-6 md:p-8">
+      <div className="w-full max-w-5xl space-y-8">
+        <header className="flex flex-wrap justify-between items-center gap-4 sticky top-0 bg-gray-900/80 backdrop-blur-lg py-4 px-2 -mx-2 z-30 md:relative md:bg-transparent md:backdrop-blur-none md:py-0 md:px-0 md:mx-0 shadow-sm md:shadow-none rounded-b-lg md:rounded-none">
+          <Link href="/" className="flex items-center gap-3 group">
+            <svg className="h-8 w-8 text-purple-400 group-hover:text-purple-300 transition-colors" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"> <path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path><path d="M2 12l10 5 10-5"></path> </svg>
+            <h1 className="text-2xl sm:text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-purple-400 via-pink-400 to-red-400 group-hover:opacity-80 transition-opacity tracking-tight">Solana Tip Jar</h1>
+          </Link>
+          <div className="flex items-center gap-3 sm:gap-4">
+            {!hasMounted ? <div className="app-button !bg-indigo-600 opacity-50 !font-semibold !py-2 !px-4 !text-sm !h-[40px] w-[150px] leading-snug animate-pulse rounded-lg"></div> : !connected ? ( <WalletMultiButton /> ) : (
+              <>
+                <div className="hidden md:flex relative" ref={dropdownRef}>
+                  <button onClick={() => setIsUserDropdownOpen(!isUserDropdownOpen)} className="flex items-center justify-center w-10 h-10 bg-gray-700/80 hover:bg-gray-700 rounded-full focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-gray-900 transition-colors shadow-md">
+                    {currentProfile?.profilePictureUrl ? (<Image src={currentProfile.profilePictureUrl} alt="User" width={40} height={40} className="rounded-full object-cover"/>) : (<UserCircleIcon className="h-7 w-7 text-gray-300" />)}
+                  </button>
+                  <AnimatePresence> {isUserDropdownOpen && ( <motion.div initial={{ opacity: 0, y: -10, scale:0.95 }} animate={{ opacity: 1, y: 0, scale:1 }} exit={{ opacity: 0, y: -10, scale:0.95 }} transition={{ duration: 0.15 }}
+                    className="absolute right-0 mt-12 w-64 bg-gray-800 border border-gray-700 rounded-lg shadow-2xl z-20 py-2 space-y-1">
+                    <div className="px-4 py-3 border-b border-gray-700 mb-1"><p className="text-sm font-semibold text-gray-100 truncate" title={currentProfile?.displayName}>{currentProfile?.displayName || "User"}</p><p className="text-xs text-gray-400 truncate" title={publicKey?.toBase58()}>{publicKey?.toBase58()}</p></div>
+                    <button onClick={() => { setActiveSection('main_tools'); setIsUserDropdownOpen(false); }} className="user-dropdown-item"><CreditCardIcon className="h-5 w-5 mr-2.5 text-gray-400"/>App Hub</button>
+                    {/* --- NEW LINK TO SEND-TIP PAGE IN DROPDOWN --- */}
+                    <Link href="/send-tip" onClick={() => setIsUserDropdownOpen(false)} className="user-dropdown-item"><PaperAirplaneIcon className="h-5 w-5 mr-2.5 text-gray-400"/>Send Direct Tip</Link>
+                    {/* --- END NEW LINK --- */}
+                    <button onClick={() => { setActiveSection('creator_dashboard'); setIsUserDropdownOpen(false); }} className="user-dropdown-item"><TableCellsIcon className="h-5 w-5 mr-2.5 text-gray-400"/>Creator Dashboard</button>
+                    <button onClick={() => { setActiveSection('tipper_dashboard'); setIsUserDropdownOpen(false); }} className="user-dropdown-item"><ArrowUpRightIcon className="h-5 w-5 mr-2.5 text-gray-400"/>My Sent Tips</button>
+                    <button onClick={() => { setActiveSection('edit_profile'); setIsUserDropdownOpen(false); }} className="user-dropdown-item"><Cog8ToothIcon className="h-5 w-5 mr-2.5 text-gray-400"/>Edit My Profile</button>
+                    <button onClick={() => { setActiveSection('embed_widget'); setIsUserDropdownOpen(false); }} className="user-dropdown-item"><CodeBracketIcon className="h-5 w-5 mr-2.5 text-gray-400"/>Embed Button</button>
+                    <Link href="/create-link" onClick={() => setIsUserDropdownOpen(false)} className="user-dropdown-item"><LinkHeroIcon className="h-5 w-5 mr-2.5 text-gray-400"/>Create New Tip Link</Link>
+                    <div className="px-2 pt-1"><hr className="border-gray-700"/></div>
+                    <button onClick={() => { disconnect().catch(e=>console.error(e)); setIsUserDropdownOpen(false); }} className="user-dropdown-item !text-red-400 hover:!bg-red-500/20 hover:!text-red-300"><ArrowLeftOnRectangleIcon className="h-5 w-5 mr-2.5"/>Disconnect</button>
+                   </motion.div> )} </AnimatePresence>
+                </div>
+                <div className="md:hidden relative" ref={mobileMenuRef}> <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="p-2 rounded-md text-gray-300 hover:bg-gray-700 focus:outline-none"> {isMobileMenuOpen ? <XMarkIcon className="h-7 w-7"/> : <Bars3Icon className="h-7 w-7"/>} </button> </div>
+              </>
+            )}
+          </div>
+        </header>
+        <AnimatePresence> {isMobileMenuOpen && connected && hasMounted && ( <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.25, ease:"easeInOut" }}
+            className="md:hidden bg-gray-800 rounded-lg shadow-xl p-4 space-y-2 fixed top-[76px] left-4 right-4 z-20 border border-gray-700 mobile-menu-content">
+            <button onClick={() => { setActiveSection('main_tools'); setIsMobileMenuOpen(false); }} className="user-dropdown-item w-full"><CreditCardIcon className="h-5 w-5 mr-2.5 text-gray-400"/>App Hub</button>
+            {/* --- NEW LINK TO SEND-TIP PAGE IN MOBILE MENU --- */}
+            <Link href="/send-tip" onClick={() => setIsMobileMenuOpen(false)} className="user-dropdown-item w-full"><PaperAirplaneIcon className="h-5 w-5 mr-2.5 text-gray-400"/>Send Direct Tip</Link>
+            {/* --- END NEW LINK --- */}
+            <button onClick={() => { setActiveSection('creator_dashboard'); setIsMobileMenuOpen(false); }} className="user-dropdown-item w-full"><TableCellsIcon className="h-5 w-5 mr-2.5 text-gray-400"/>Creator Dashboard</button>
+            <button onClick={() => { setActiveSection('tipper_dashboard'); setIsMobileMenuOpen(false); }} className="user-dropdown-item w-full"><ArrowUpRightIcon className="h-5 w-5 mr-2.5 text-gray-400"/>My Sent Tips</button>
+            <button onClick={() => { setActiveSection('edit_profile'); setIsMobileMenuOpen(false); }} className="user-dropdown-item w-full"><Cog8ToothIcon className="h-5 w-5 mr-2.5 text-gray-400"/>Edit My Profile</button>
+            <button onClick={() => { setActiveSection('embed_widget'); setIsMobileMenuOpen(false); }} className="user-dropdown-item w-full"><CodeBracketIcon className="h-5 w-5 mr-2.5 text-gray-400"/>Embed Button</button>
+            <Link href="/create-link" onClick={() => setIsMobileMenuOpen(false)} className="user-dropdown-item w-full"><LinkHeroIcon className="h-5 w-5 mr-2.5 text-gray-400"/>Create New Tip Link</Link>
+            <div className="px-2 pt-1"><hr className="border-gray-700"/></div>
+            <button onClick={() => { disconnect().catch(e=>console.error(e)); setIsMobileMenuOpen(false); }} className="user-dropdown-item w-full !text-red-400 hover:!bg-red-500/20 hover:!text-red-300"><ArrowLeftOnRectangleIcon className="h-5 w-5 mr-2.5"/>Disconnect</button>
+        </motion.div> )} </AnimatePresence>
+
+        {hasMounted && error && <p className="app-message-error animate-fadeIn">{error}</p>}
+        {hasMounted && successMessage && <p className="app-message-success animate-fadeIn">{successMessage}</p>}
+        
+        <div className="mt-4 md:mt-0">
+         {renderSectionContent()}
+        </div>
+      </div>
     </main>
   );
-  // --- END OF THE RETURN STATEMENT ---
 }

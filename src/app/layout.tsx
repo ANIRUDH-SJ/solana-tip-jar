@@ -7,10 +7,10 @@ import WalletContextProvider from './components/WalletContextProvider';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Solana Tip Jar - Tip Creators with SOL!', // More descriptive
-  description: 'The easiest way to send and receive SOL tips. One-click tipping for content creators on Twitter/X, Twitch, and more!',
+  title: 'Solana Tip Jar - Instant SOL Tipping',
+  description: 'The easiest way to send and receive SOL tips. One-click tipping for content creators and fans!',
   icons: {
-    icon: '/favicon.ico', // Path relative to the public folder
+    icon: '/favicon.ico',
   }
 };
 
@@ -20,8 +20,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body className={`${inter.className} bg-gray-900`}> {/* Ensure bg-gray-900 is on body or html for full coverage */}
+    <html lang="en" className="dark">
+      <body className={`${inter.className} bg-gray-900 text-gray-100 antialiased`}>
         <WalletContextProvider>
           {children}
         </WalletContextProvider>
